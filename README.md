@@ -9,7 +9,7 @@ Run a local AI chatbot on your own computer. Everything stays on your machine â€
 Open a terminal and run:
 
 ```bash
-git clone <this-repo-url>
+git clone https://github.com/nulvox/ollama-demo.git
 cd ollama-bazzite
 ./setup.sh
 ```
