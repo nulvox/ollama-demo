@@ -10,7 +10,7 @@ Open a terminal and run:
 
 ```bash
 git clone https://github.com/nulvox/ollama-demo.git
-cd ollama-bazzite
+cd ollama-demo
 ./setup.sh
 ```
 

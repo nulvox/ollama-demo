@@ -48,7 +48,7 @@ sudo systemctl restart docker
 ### 5. Start the stack
 
 ```bash
-cd ollama-bazzite
+cd ollama-demo
 docker compose up -d
 ```
 
@@ -99,7 +99,7 @@ sudo systemctl restart docker
 ### 4. Start the stack
 
 ```bash
-cd ollama-bazzite
+cd ollama-demo
 docker compose up -d
 ```
 
