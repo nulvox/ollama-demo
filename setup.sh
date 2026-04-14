@@ -584,6 +584,16 @@ main() {
         fi
     fi
 
+    # ── Set compose profile ────────────────────────────────────────────────
+    local compose_profile="cpu"
+    if [[ "$HAS_NVIDIA" == "true" ]]; then
+        compose_profile="gpu"
+    fi
+
+    # Write profile to .env so `docker compose up -d` works without flags
+    echo "COMPOSE_PROFILES=${compose_profile}" > "$SCRIPT_DIR/.env"
+    info "Compose profile set to: ${compose_profile}"
+
     if ! confirm "Ready to set up? This will install Docker and configure GPU containers."; then
         echo -e "  ${DIM}No worries. Run this script again when you're ready.${RESET}"
         exit 0

@@ -47,8 +47,10 @@ sudo systemctl restart docker
 
 ### 5. Start the stack
 
+From the `ollama-demo` directory:
+
 ```bash
-cd ollama-demo
+echo "COMPOSE_PROFILES=gpu" > .env
 docker compose up -d
 ```
 
@@ -98,10 +100,14 @@ sudo systemctl restart docker
 
 ### 4. Start the stack
 
+From the `ollama-demo` directory:
+
 ```bash
-cd ollama-demo
+echo "COMPOSE_PROFILES=gpu" > .env
 docker compose up -d
 ```
+
+If you don't have an NVIDIA GPU, use `cpu` instead of `gpu`.
 
 ---
 
