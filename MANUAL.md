@@ -56,7 +56,7 @@ docker compose up -d
 
 ---
 
-## Ubuntu / Debian
+## Ubuntu / Debian (NVIDIA GPU)
 
 ### 1. Install Docker
 
@@ -107,7 +107,45 @@ echo "COMPOSE_PROFILES=gpu" > .env
 docker compose up -d
 ```
 
-If you don't have an NVIDIA GPU, use `cpu` instead of `gpu`.
+If you don't have an NVIDIA GPU, use `cpu` instead of `gpu` (or `amd` — see below).
+
+---
+
+## Ubuntu / Debian (AMD GPU)
+
+### 1. Install Docker
+
+Follow step 1 from the NVIDIA section above — Docker setup is the same.
+
+### 2. Verify AMD GPU access
+
+Make sure the `amdgpu` driver is loaded and the devices exist:
+
+```bash
+ls /dev/kfd /dev/dri
+```
+
+If `/dev/kfd` doesn't exist, you may need to install or update your mesa/amdgpu packages.
+
+### 3. Set up device permissions
+
+```bash
+# Add yourself to the render and video groups
+sudo usermod -aG render $USER
+sudo usermod -aG video $USER
+# Log out and back in
+```
+
+### 4. Start the stack
+
+From the `ollama-demo` directory:
+
+```bash
+echo "COMPOSE_PROFILES=amd" > .env
+docker compose up -d
+```
+
+This uses the `ollama/ollama:rocm` image with AMD GPU passthrough.
 
 ---
 

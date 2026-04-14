@@ -32,6 +32,16 @@ services:
               count: all
               capabilities: [gpu]
 
+  # GPU-accelerated Ollama (AMD ROCm)
+  ollama-amd:
+    <<: *ollama-base
+    image: ollama/ollama:rocm
+    profiles:
+      - amd
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+
   open-webui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: open-webui
