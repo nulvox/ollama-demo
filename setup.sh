@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════════════════════════════╗
 # ║  Ollama Local AI Setup                                                    ║
-# ║  Supports: Bazzite (Fedora Atomic) and Ubuntu/Debian                      ║
+# ║  Supports: Bazzite (Fedora Atomic) and Ubuntu/Debian (NVIDIA + AMD)       ║
 # ╚═══════════════════════════════════════════════════════════════════════════╝
 set -euo pipefail
 
@@ -182,6 +182,7 @@ detect_distro() {
 
 detect_gpu() {
     HAS_NVIDIA=false
+    HAS_AMD=false
     GPU_NAME="(not detected)"
     GPU_VRAM="unknown"
 
@@ -193,6 +194,18 @@ detect_gpu() {
         # GPU exists but drivers aren't working
         GPU_NAME=$(lspci 2>/dev/null | grep -i nvidia | head -1 | sed 's/.*: //')
         HAS_NVIDIA="driver_missing"
+    elif [[ -e /dev/kfd ]]; then
+        HAS_AMD=true
+        GPU_NAME=$(lspci 2>/dev/null | grep -i 'vga\|display\|3d' | grep -i 'amd\|radeon' | head -1 | sed 's/.*: //' || echo "AMD GPU")
+        GPU_VRAM=$(cat /sys/class/drm/card*/device/mem_info_vram_total 2>/dev/null | head -1 || echo "")
+        if [[ -n "$GPU_VRAM" && "$GPU_VRAM" != "0" ]]; then
+            GPU_VRAM="$((GPU_VRAM / 1024 / 1024)) MiB"
+        else
+            GPU_VRAM="unknown"
+        fi
+    elif lspci 2>/dev/null | grep -i 'vga\|display\|3d' | grep -qi 'amd\|radeon'; then
+        GPU_NAME=$(lspci 2>/dev/null | grep -i 'vga\|display\|3d' | grep -i 'amd\|radeon' | head -1 | sed 's/.*: //')
+        HAS_AMD="driver_missing"
     fi
 }
 
@@ -384,6 +397,56 @@ debian_install_nvidia_toolkit() {
     info "NVIDIA Container Toolkit installed."
 }
 
+# ── Install functions: AMD ───────────────────────────────────────────────────
+
+check_amd_devices() {
+    if [[ ! -e /dev/kfd ]] || [[ ! -e /dev/dri ]]; then
+        warn "AMD GPU devices (/dev/kfd, /dev/dri) not found."
+        detail "Make sure the amdgpu driver is loaded and ROCm-compatible."
+        return 1
+    fi
+    info "AMD GPU devices found (/dev/kfd, /dev/dri)."
+    return 0
+}
+
+ensure_amd_device_access() {
+    # User needs access to /dev/kfd (render/video group)
+    local kfd_group
+    kfd_group=$(stat -c '%G' /dev/kfd 2>/dev/null || echo "render")
+
+    if ! groups | grep -qw "$kfd_group"; then
+        sudo usermod -aG "$kfd_group" "$USER"
+        warn "Added you to the ${kfd_group} group for GPU access."
+        detail "This takes effect on next login."
+    else
+        info "User has access to /dev/kfd (${kfd_group} group)."
+    fi
+
+    # Also check video group for /dev/dri
+    if ! groups | grep -qw video; then
+        sudo usermod -aG video "$USER"
+        warn "Added you to the video group for GPU access."
+    fi
+}
+
+test_amd_gpu_container() {
+    detail "Testing AMD GPU access inside a container..."
+    detail "(This downloads a small ROCm test image — may take a minute)"
+    blank
+
+    if run_with_spinner "Running AMD GPU container test..." \
+        $DOCKER_CMD run --rm --device /dev/kfd --device /dev/dri \
+            rocm/rocm-terminal:latest rocm-smi; then
+        info "AMD GPU container test passed!"
+        return 0
+    else
+        warn "AMD GPU container test failed."
+        detail "Ollama might still work — it bundles its own ROCm libraries."
+        detail "If models run on CPU only, check your amdgpu driver and ROCm setup."
+        return 1
+    fi
+}
+
 # ── Shared functions ──────────────────────────────────────────────────────────
 
 ensure_docker_group() {
@@ -435,6 +498,13 @@ pick_model() {
     if [[ "$HAS_NVIDIA" == "true" ]]; then
         # Parse VRAM in MiB
         vram_mb=$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | head -1 | tr -d ' ' || echo "0")
+    elif [[ "$HAS_AMD" == "true" ]]; then
+        # Parse VRAM in bytes from sysfs, convert to MiB
+        local vram_bytes
+        vram_bytes=$(cat /sys/class/drm/card*/device/mem_info_vram_total 2>/dev/null | head -1 || echo "0")
+        if [[ "$vram_bytes" -gt 0 ]] 2>/dev/null; then
+            vram_mb=$((vram_bytes / 1024 / 1024))
+        fi
     fi
 
     echo ""
@@ -556,7 +626,7 @@ main() {
     echo -e "  ${BOLD}System detected:${RESET}"
     echo -e "    OS:    ${DISTRO_PRETTY}"
     echo -e "    GPU:   ${GPU_NAME}"
-    if [[ "$HAS_NVIDIA" == "true" ]]; then
+    if [[ "$HAS_NVIDIA" == "true" || "$HAS_AMD" == "true" ]]; then
     echo -e "    VRAM:  ${GPU_VRAM}"
     fi
     echo -e "    Docker: $(if [[ "$HAS_DOCKER" == "true" ]]; then echo "installed"; else echo "not installed"; fi)"
@@ -569,7 +639,7 @@ main() {
      You can still set things up manually — see MANUAL.md."
     fi
 
-    # Handle missing NVIDIA drivers
+    # Handle missing GPU drivers
     if [[ "$HAS_NVIDIA" == "driver_missing" ]]; then
         warn "Found NVIDIA hardware but drivers aren't loaded."
         if [[ "$DISTRO" == "bazzite" ]]; then
@@ -584,10 +654,22 @@ main() {
         fi
     fi
 
+    if [[ "$HAS_AMD" == "driver_missing" ]]; then
+        warn "Found AMD GPU hardware but the amdgpu driver doesn't seem active."
+        detail "Make sure the amdgpu kernel module is loaded and /dev/kfd exists."
+        detail "You may need to install the mesa or ROCm packages for your distro."
+        blank
+        if ! confirm "Continue anyway? (will run without GPU acceleration)"; then
+            exit 0
+        fi
+    fi
+
     # ── Set compose profile ────────────────────────────────────────────────
     local compose_profile="cpu"
     if [[ "$HAS_NVIDIA" == "true" ]]; then
         compose_profile="gpu"
+    elif [[ "$HAS_AMD" == "true" ]]; then
+        compose_profile="amd"
     fi
 
     # Write profile to .env so `docker compose up -d` works without flags
@@ -604,6 +686,8 @@ main() {
     local total_steps=4
     if [[ "$HAS_NVIDIA" == "true" ]]; then
         total_steps=6
+    elif [[ "$HAS_AMD" == "true" ]]; then
+        total_steps=5
     fi
     local current_step=0
 
@@ -667,6 +751,17 @@ main() {
 
         configure_nvidia_runtime
         test_gpu_container || true
+    fi
+
+    # ── Steps: AMD (conditional) ───────────────────────────────────────────
+
+    if [[ "$HAS_AMD" == "true" ]]; then
+        current_step=$((current_step + 1))
+        step "$current_step" "$total_steps" "Configure AMD GPU access"
+
+        check_amd_devices || true
+        ensure_amd_device_access
+        test_amd_gpu_container || true
     fi
 
     # ── Step: Pick model ──────────────────────────────────────────────────────
